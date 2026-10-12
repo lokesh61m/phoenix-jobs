@@ -1,9 +1,9 @@
 name: Software Job Radar
 
 on:
-  # Offset from the top of the hour, when GitHub reports more schedule load.
+  # Public repositories have free standard GitHub-hosted runners.
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -59,7 +59,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          POLL_INTERVAL_MINUTES: "15"
+          POLL_INTERVAL_MINUTES: "5"
           LOOKBACK_HOURS: "72"
           DB_PATH: data/jobs.sqlite3
           COMPANIES_PATH: config/companies.json
