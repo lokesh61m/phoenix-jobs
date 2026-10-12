@@ -562,6 +562,15 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
     return jobs
 
 
+def workday_job_url(host: str, site: str, external_path: str) -> str:
+    """Build a public Workday job URL from the API's external path."""
+    site_path = site.strip("/")
+    job_path = "/" + external_path.strip("/")
+    if job_path == f"/{site_path}" or job_path.startswith(f"/{site_path}/"):
+        return f"https://{host}{job_path}"
+    return f"https://{host}/{site_path}{job_path}"
+
+
 def workday(company: str, tenant: str, host: str, site: str, queries: list[str], pages: int = 5) -> list[Job]:
     jobs: list[Job] = []
     seen: set[str] = set()
@@ -595,7 +604,7 @@ def workday(company: str, tenant: str, host: str, site: str, queries: list[str],
                     except SourceError:
                         detail = item
                 location = str(item.get("locationsText", ""))
-                url = f"https://{host}{source_id}"
+                url = workday_job_url(host, site, source_id)
                 jobs.append(
                     Job(
                         company=company,

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from job_radar import app
 from job_radar.filtering import passes
 from job_radar.models import Job
+from job_radar.sources import workday_job_url
 from job_radar.storage import Store
 
 
@@ -38,6 +39,28 @@ class FilteringTests(unittest.TestCase):
 
     def test_allows_higher_preferred_experience(self):
         self.assertTrue(passes(make_job(description="5+ years preferred; 3 years required.")))
+
+
+class SourceUrlTests(unittest.TestCase):
+    def test_workday_url_includes_site_path(self):
+        self.assertEqual(
+            workday_job_url(
+                "zoom.wd5.myworkdayjobs.com",
+                "Zoom",
+                "/job/San-Jose-CA/Software-Engineer_R19747-1",
+            ),
+            "https://zoom.wd5.myworkdayjobs.com/Zoom/job/San-Jose-CA/Software-Engineer_R19747-1",
+        )
+
+    def test_workday_url_does_not_duplicate_existing_site_path(self):
+        self.assertEqual(
+            workday_job_url(
+                "salesforce.wd12.myworkdayjobs.com",
+                "External_Career_Site",
+                "/External_Career_Site/job/California---San-Francisco/Job_JR123",
+            ),
+            "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/California---San-Francisco/Job_JR123",
+        )
 
 
 class NotificationDeduplicationTests(unittest.TestCase):
