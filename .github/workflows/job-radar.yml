@@ -1,9 +1,6 @@
 name: Software Job Radar
 
 on:
-  # Public repositories have free standard GitHub-hosted runners.
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
