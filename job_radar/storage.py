@@ -88,21 +88,38 @@ class Store:
             return job, False
 
         # URL changes and small text edits are common during reposts. Treat a close
-        # match from the same company/title/location as the same posting.
+        # match from the same company/title/location as the same posting. Some
+        # boards also publish duplicate requisition IDs with slightly different
+        # descriptions on the same day, so the posting date is another strong
+        # duplicate signal.
         candidates = self.connection.execute(
-            "SELECT * FROM jobs WHERE company = ? AND title = ? AND location = ? ORDER BY last_seen_at DESC LIMIT 20",
-            (job.company, job.title, job.location),
+            "SELECT * FROM jobs WHERE company = ? AND title = ? ORDER BY last_seen_at DESC LIMIT 50",
+            (job.company, job.title),
         ).fetchall()
         new_body = compact(job.description)[:2500]
+        published_day = iso(job.published_at)[:10] if job.published_at else None
         for candidate in candidates:
+            if compact(candidate["location"]) != compact(job.location):
+                continue
             old_body = compact(candidate["description"])[:2500]
-            if new_body and old_body and SequenceMatcher(None, new_body, old_body).ratio() >= 0.92:
+            candidate_day = (candidate["published_at"] or "")[:10] or None
+            same_posting_day = published_day and candidate_day == published_day
+            similar_body = new_body and old_body and SequenceMatcher(None, new_body, old_body).ratio() >= 0.92
+            if same_posting_day or similar_body:
                 job.fingerprint = candidate["fingerprint"]
                 job.first_seen_at = parse_iso(candidate["first_seen_at"]) or job.first_seen_at
                 job.last_sent_at = parse_iso(candidate["last_sent_at"])
                 self.connection.execute(
-                    "UPDATE jobs SET last_seen_at = ?, updated_at = ?, url = ?, apply_url = ?, description = ?, categories = ? WHERE fingerprint = ?",
-                    (iso(job.last_seen_at), iso(job.updated_at), job.url, job.apply_url, job.description, ",".join(job.categories), job.fingerprint),
+                    """
+                    UPDATE jobs SET source_type = ?, source_id = ?, url = ?, apply_url = ?,
+                        published_at = ?, last_seen_at = ?, updated_at = ?, description = ?, categories = ?
+                    WHERE fingerprint = ?
+                    """,
+                    (
+                        job.source_type, job.source_id, job.url, job.apply_url, iso(job.published_at),
+                        iso(job.last_seen_at), iso(job.updated_at), job.description, ",".join(job.categories),
+                        job.fingerprint,
+                    ),
                 )
                 self.connection.commit()
                 return job, False

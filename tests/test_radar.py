@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from job_radar import app
@@ -54,6 +55,23 @@ class NotificationDeduplicationTests(unittest.TestCase):
     def test_changed_description_with_same_source_id_is_not_new(self):
         first = make_job(source_id="stable-id", description="Build backend services.")
         second = make_job(source_id="stable-id", description="Build backend services and APIs.")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(os.path.join(directory, "jobs.sqlite3"))
+            saved, is_new = store.upsert(first)
+            self.assertTrue(is_new)
+            store.mark_sent([saved], saved.first_seen_at)
+
+            updated, is_new = store.upsert(second)
+            self.assertFalse(is_new)
+            self.assertIsNotNone(updated.last_sent_at)
+
+    def test_same_posting_day_and_location_is_not_new(self):
+        posted = datetime(2026, 10, 10, tzinfo=timezone.utc)
+        first = make_job(source_id="req-1", description="Build backend services.")
+        second = make_job(source_id="req-2", description="Build backend services for a different team.")
+        first.published_at = posted
+        second.published_at = posted
 
         with tempfile.TemporaryDirectory() as directory:
             store = Store(os.path.join(directory, "jobs.sqlite3"))
