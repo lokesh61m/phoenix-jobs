@@ -1,16 +1,17 @@
 # Software Job Radar
 
-A local monitor for fresh US software, ML, and AI jobs. It checks direct company career feeds and common ATS APIs, filters for US roles and postings asking for no more than four years of experience, deduplicates reposts, and sends grouped Telegram alerts.
+A local monitor for fresh US software, ML, and AI jobs. It checks direct company career feeds and common ATS APIs, filters for US roles and postings asking for no more than 3.5 years of experience, deduplicates reposts, and sends grouped Telegram alerts.
 
 ## Current behavior
 
-- Refreshes every 20 minutes by default.
+- The external cron-job.org scheduler refreshes every 5 minutes.
 - Uses a 72-hour freshness window.
 - Prefers direct company career feeds, including Greenhouse, Lever, Ashby,
   SmartRecruiters, Amazon Jobs, Apple Jobs, Google Careers, Microsoft Careers,
   Workday, Eightfold, and AMD career sites.
 - Accepts US locations and explicit US-remote roles; rejects ambiguous worldwide/remote listings.
-- Accepts roles whose minimum stated experience requirement is four years or less.
+- Accepts roles whose maximum stated required experience is 3.5 years or less.
+- Excludes titles containing `senior` or `manager`, along with staff, principal, director, and architect titles.
 - Stores first-seen state in SQLite so a role is not alerted twice, even when a URL changes.
 - Sends one compact Telegram batch per scan.
 
@@ -50,7 +51,7 @@ The current roster has 59 active sources. Meta, Uber, ServiceNow, Walmart, and D
 
 ## GitHub Actions deployment
 
-`.github/workflows/job-radar.yml` runs one scan every 15 minutes. It stores the SQLite state as a short-lived GitHub Actions artifact so deduplication survives between runners without committing the database to the repository.
+`.github/workflows/job-radar.yml` is triggered by cron-job.org every 5 minutes. It stores the SQLite state as a short-lived GitHub Actions artifact so deduplication survives between runners without committing the database to the repository.
 
 Add these repository Actions secrets before enabling the workflow:
 

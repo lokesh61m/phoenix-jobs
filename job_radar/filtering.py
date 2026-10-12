@@ -47,8 +47,13 @@ NON_US_MARKERS = (
 )
 
 
+MAX_REQUIRED_YEARS = 3.5
+OPTIONAL_EXPERIENCE_MARKERS = ("preferred", "nice to have", "bonus", "plus")
+
+
 def normalized(value: str) -> str:
-    value = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode().lower()
+    value = (value or "").replace("–", "-").replace("—", "-")
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -91,30 +96,37 @@ def is_us_role(job: Job) -> bool:
     return False
 
 
-def minimum_years_required(job: Job) -> int | None:
-    text = normalized(f"{job.title} {job.description}")
-    candidates: list[int] = []
-    patterns = (
-        r"(?:at least|minimum of|min(?:imum)?|requires?|required)\s+(\d+)\+?\s*(?:years?|yrs?)",
-        r"(\d+)\+\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)",
-        r"(\d+)\s*[-–]\s*(\d+)\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)",
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            candidates.append(int(match.group(1)))
-    return min(candidates) if candidates else None
-
-
 def passes_experience(job: Job) -> bool:
     text = normalized(job.description)
-    high_requirement = re.search(r"\b([5-9]|[1-9][0-9])\s*\+?\s*(?:years?|yrs?)\b", text)
-    if high_requirement:
-        start = max(0, high_requirement.start() - 100)
-        context = text[start:high_requirement.end() + 100]
-        if not any(word in context for word in ("preferred", "nice to have", "bonus", "plus")):
+    number = r"\d+(?:\.\d+)?"
+
+    def is_optional(match: re.Match[str]) -> bool:
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 120)
+        context = text[start:end]
+        return any(marker in context for marker in OPTIONAL_EXPERIENCE_MARKERS)
+
+    # For ranges, use the upper bound: a posting asking for 3-5 years can
+    # require more than the user's 3.5-year ceiling.
+    range_pattern = rf"\b({number})\s*(?:-|to)\s*({number})\s*(?:years?|yrs?)\b"
+    for match in re.finditer(range_pattern, text):
+        if not is_optional(match) and float(match.group(2)) > MAX_REQUIRED_YEARS:
             return False
-    required = minimum_years_required(job)
-    return required is None or required <= 4
+
+    # Catch 4 years, 4+ years, and similar wording.
+    single_pattern = rf"\b({number})\s*\+?\s*(?:years?|yrs?)\b"
+    for match in re.finditer(single_pattern, text):
+        if not is_optional(match) and float(match.group(1)) > MAX_REQUIRED_YEARS:
+            return False
+
+    # "More than 3.5 years" exceeds the ceiling even though the number itself
+    # is not greater than 3.5.
+    more_than_pattern = rf"\b(?:more than|over)\s+({number})\s*(?:years?|yrs?)\b"
+    for match in re.finditer(more_than_pattern, text):
+        if not is_optional(match) and float(match.group(1)) >= MAX_REQUIRED_YEARS:
+            return False
+
+    return True
 
 
 def passes(job: Job) -> bool:
@@ -126,6 +138,7 @@ def passes(job: Job) -> bool:
         and job.url
         and job.categories
         and not any(term in title for term in obvious_mismatch)
+        and not re.search(r"\b(?:senior|manager)\b", title)
         and is_us_role(job)
         and passes_experience(job)
     )

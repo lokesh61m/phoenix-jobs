@@ -29,7 +29,7 @@ def scan(dry_run: bool = False) -> int:
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=env_int("LOOKBACK_HOURS", 72))
     store = Store(str(db_path()))
-    new_jobs: list[Job] = []
+    pending_jobs: dict[str, Job] = {}
     source_count = 0
     source_errors = 0
 
@@ -54,8 +54,13 @@ def scan(dry_run: bool = False) -> int:
                 # successfully, then Telegram may be unavailable or unconfigured.
                 # It must be sent on the next successful scan instead of being lost.
                 if saved.last_sent_at is None:
-                    new_jobs.append(saved)
+                    # A source can return the same posting more than once
+                    # under different requisition IDs or search queries. The
+                    # store merges those records, but we must also dedupe the
+                    # in-memory notification batch before sending it.
+                    pending_jobs[saved.fingerprint] = saved
 
+    new_jobs = list(pending_jobs.values())
     new_jobs.sort(key=lambda job: (job.company.lower(), job.title.lower()))
     print(f"[scan] sources={source_count} errors={source_errors} new_jobs={len(new_jobs)}")
     if dry_run:
