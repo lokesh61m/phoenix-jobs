@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,23 +33,28 @@ def scan(dry_run: bool = False) -> int:
     source_count = 0
     source_errors = 0
 
-    for entry in load_companies(companies_path()):
-        try:
-            fetched = fetch_source(entry)
-            source_count += 1
-        except SourceError as exc:
-            source_errors += 1
-            print(f"[source error] {entry['company']} ({entry['type']}): {exc}")
-            continue
-        for job in fetched:
-            if not is_fresh(job, cutoff) or not passes(job):
+    entries = load_companies(companies_path())
+    workers = max(1, min(16, env_int("FETCH_WORKERS", 12)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(fetch_source, entry): entry for entry in entries}
+        for future in as_completed(futures):
+            entry = futures[future]
+            try:
+                fetched = future.result()
+                source_count += 1
+            except Exception as exc:
+                source_errors += 1
+                print(f"[source error] {entry['company']} ({entry['type']}): {exc}")
                 continue
-            saved, _is_new = store.upsert(job)
-            # Keep failed notifications queued. A scan may discover the job
-            # successfully, then Telegram may be unavailable or unconfigured.
-            # It must be sent on the next successful scan instead of being lost.
-            if saved.last_sent_at is None:
-                new_jobs.append(saved)
+            for job in fetched:
+                if not is_fresh(job, cutoff) or not passes(job):
+                    continue
+                saved, _is_new = store.upsert(job)
+                # Keep failed notifications queued. A scan may discover the job
+                # successfully, then Telegram may be unavailable or unconfigured.
+                # It must be sent on the next successful scan instead of being lost.
+                if saved.last_sent_at is None:
+                    new_jobs.append(saved)
 
     new_jobs.sort(key=lambda job: (job.company.lower(), job.title.lower()))
     print(f"[scan] sources={source_count} errors={source_errors} new_jobs={len(new_jobs)}")

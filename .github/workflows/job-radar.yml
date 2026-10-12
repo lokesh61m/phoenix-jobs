@@ -60,6 +60,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           POLL_INTERVAL_MINUTES: "5"
+          FETCH_WORKERS: "12"
           LOOKBACK_HOURS: "72"
           DB_PATH: data/jobs.sqlite3
           COMPANIES_PATH: config/companies.json
