@@ -7,7 +7,7 @@ from unittest.mock import patch
 from job_radar import app
 from job_radar.filtering import passes
 from job_radar.models import Job
-from job_radar.sources import ashby, workday_job_url
+from job_radar.sources import ashby, parse_date, search_page_count, workday_job_url
 from job_radar.storage import Store
 
 
@@ -42,6 +42,15 @@ class FilteringTests(unittest.TestCase):
 
 
 class SourceUrlTests(unittest.TestCase):
+    def test_search_page_count_uses_api_total(self):
+        payload = {"data": {"count": 474}}
+        self.assertEqual(search_page_count(payload, configured_pages=3), 48)
+        self.assertEqual(search_page_count(payload, configured_pages=3, maximum_pages=20), 20)
+        self.assertEqual(search_page_count(payload, configured_pages=2, page_size=20), 24)
+
+    def test_parse_date_handles_yesterday(self):
+        self.assertIsNotNone(parse_date("Posted Yesterday"))
+
     def test_ashby_uses_stable_id_and_canonical_urls(self):
         payload = {
             "jobs": [

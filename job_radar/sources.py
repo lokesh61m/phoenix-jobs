@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import re
 import ssl
 import time
@@ -73,6 +74,8 @@ def parse_date(value: Any) -> datetime | None:
     relative = re.search(r"(?:posted\s+)?(\d+)\+?\s+days?\s+ago", text.lower())
     if relative:
         return datetime.now(timezone.utc) - timedelta(days=int(relative.group(1)))
+    if text.lower() in {"yesterday", "posted yesterday"}:
+        return datetime.now(timezone.utc) - timedelta(days=1)
     if text.lower() in {"today", "posted today"}:
         return datetime.now(timezone.utc)
     return None
@@ -129,6 +132,17 @@ def get_text(url: str) -> str:
             return response.read().decode("utf-8", "ignore")
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
         raise SourceError(f"{url}: {exc}") from exc
+
+
+def search_page_count(payload: Any, configured_pages: int, maximum_pages: int = 60, page_size: int = 10) -> int:
+    """Use a search API's total count while retaining a safe minimum/cap."""
+    data = payload.get("data") if isinstance(payload, dict) else None
+    try:
+        total = int((data or {}).get("count") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    discovered = math.ceil(total / page_size) if total else 0
+    return min(maximum_pages, max(1, configured_pages, discovered))
 
 
 def greenhouse(company: str, board: str) -> list[Job]:
@@ -267,35 +281,54 @@ def amazon(company: str, queries: list[str]) -> list[Job]:
     jobs: list[Job] = []
     seen: set[str] = set()
     for query in queries:
-        url = "https://www.amazon.jobs/en/search.json?" + urllib.parse.urlencode(
-            {"base_query": query, "country": "USA", "sort": "recent", "offset": 0, "result_limit": 100}
-        )
-        payload = get_json(url)
-        for item in payload.get("jobs", []) if isinstance(payload, dict) else []:
-            source_id = str(item.get("id_icims") or item.get("id") or item.get("job_path"))
-            if source_id in seen:
-                continue
-            seen.add(source_id)
-            location = item.get("normalized_location") or item.get("location", "")
-            description = " ".join(
-                str(item.get(key, "")) for key in ("basic_qualifications", "description", "preferred_qualifications")
+        page = 0
+        total_pages = 1
+        while page < total_pages:
+            if jobs:
+                time.sleep(0.25)
+            url = "https://www.amazon.jobs/en/search.json?" + urllib.parse.urlencode(
+                {
+                    "base_query": query,
+                    "country": "USA",
+                    "sort": "recent",
+                    "offset": page * 100,
+                    "result_limit": 100,
+                }
             )
-            job_path = item.get("job_path", "")
-            jobs.append(
-                Job(
-                    company=company,
-                    source_type="amazon",
-                    source_id=source_id,
-                    title=str(item.get("title", "")).strip(),
-                    location=str(location),
-                    url="https://www.amazon.jobs" + job_path,
-                    apply_url="https://www.amazon.jobs" + job_path,
-                    description=strip_html(description),
-                    published_at=parse_date(item.get("posted_date")),
-                    updated_at=parse_date(item.get("posted_date")),
-                    department=str(item.get("job_category", "")),
+            payload = get_json(url)
+            if page == 0 and isinstance(payload, dict):
+                try:
+                    total_pages = min(20, max(1, math.ceil(int(payload.get("hits") or 0) / 100)))
+                except (TypeError, ValueError):
+                    total_pages = 1
+            for item in payload.get("jobs", []) if isinstance(payload, dict) else []:
+                source_id = str(item.get("id_icims") or item.get("id") or item.get("job_path"))
+                if source_id in seen:
+                    continue
+                seen.add(source_id)
+                location = item.get("normalized_location") or item.get("location", "")
+                description = " ".join(
+                    str(item.get(key, "")) for key in ("basic_qualifications", "description", "preferred_qualifications")
                 )
-            )
+                job_path = item.get("job_path", "")
+                jobs.append(
+                    Job(
+                        company=company,
+                        source_type="amazon",
+                        source_id=source_id,
+                        title=str(item.get("title", "")).strip(),
+                        location=str(location),
+                        url="https://www.amazon.jobs" + job_path,
+                        apply_url="https://www.amazon.jobs" + job_path,
+                        description=strip_html(description),
+                        published_at=parse_date(item.get("posted_date")),
+                        updated_at=parse_date(item.get("posted_date")),
+                        department=str(item.get("job_category", "")),
+                    )
+                )
+            if not (payload.get("jobs") if isinstance(payload, dict) else None):
+                break
+            page += 1
     return jobs
 
 
@@ -404,15 +437,20 @@ def microsoft(company: str, queries: list[str], pages: int = 3) -> list[Job]:
     seen: set[str] = set()
     detail_cutoff = datetime.now(timezone.utc) - timedelta(hours=96)
     for query in queries:
-        for start in range(0, pages * 10, 10):
+        page = 0
+        total_pages = max(1, pages)
+        while page < total_pages:
             # Eightfold throttles this endpoint fairly aggressively. A small
-            # pause also keeps a 20-minute monitor from looking like a burst.
+            # pause also keeps a frequent monitor from looking like a burst.
             if jobs:
-                time.sleep(0.4)
+                time.sleep(1.0)
+            start = page * 10
             params = urllib.parse.urlencode(
                 {"domain": "microsoft.com", "query": query, "location": "United States", "start": start, "sort_by": "date"}
             )
             payload = get_json(f"https://apply.careers.microsoft.com/api/pcsx/search?{params}")
+            if page == 0:
+                total_pages = search_page_count(payload, pages)
             data = payload.get("data") or {}
             positions = data.get("positions") or []
             if not positions:
@@ -455,6 +493,7 @@ def microsoft(company: str, queries: list[str], pages: int = 3) -> list[Job]:
                         department=str(detail.get("department", item.get("department", ""))),
                     )
                 )
+            page += 1
     return jobs
 
 
@@ -464,9 +503,12 @@ def eightfold(company: str, host: str, domain: str, queries: list[str], pages: i
     seen: set[str] = set()
     detail_cutoff = datetime.now(timezone.utc) - timedelta(hours=96)
     for query in queries:
-        for start in range(0, pages * 10, 10):
+        page = 0
+        total_pages = max(1, pages)
+        while page < total_pages:
             if jobs:
-                time.sleep(0.4)
+                time.sleep(1.0)
+            start = page * 10
             params = urllib.parse.urlencode(
                 {
                     "domain": domain,
@@ -477,6 +519,8 @@ def eightfold(company: str, host: str, domain: str, queries: list[str], pages: i
                 }
             )
             payload = get_json(f"https://{host}/api/pcsx/search?{params}")
+            if page == 0:
+                total_pages = search_page_count(payload, pages)
             positions = ((payload.get("data") or {}).get("positions") or []) if isinstance(payload, dict) else []
             if not positions:
                 break
@@ -520,6 +564,7 @@ def eightfold(company: str, host: str, domain: str, queries: list[str], pages: i
                         department=str(detail.get("department", item.get("department", ""))),
                     )
                 )
+            page += 1
     return jobs
 
 
@@ -527,11 +572,20 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
     jobs: list[Job] = []
     seen: set[str] = set()
     for query in queries:
-        for page in range(1, pages + 1):
+        page = 1
+        total_pages = max(1, pages)
+        while page <= total_pages:
+            if jobs:
+                time.sleep(0.25)
             params = urllib.parse.urlencode(
                 {"keywords": query, "location": "United States", "page": page, "limit": 20}
             )
             payload = get_json(f"https://careers.amd.com/api/jobs?{params}")
+            if page == 1 and isinstance(payload, dict):
+                try:
+                    total_pages = min(30, max(1, math.ceil(int(payload.get("totalCount") or payload.get("count") or 0) / 20)))
+                except (TypeError, ValueError):
+                    total_pages = max(1, pages)
             items = payload.get("jobs", []) if isinstance(payload, dict) else []
             if not items:
                 break
@@ -570,6 +624,7 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
                         department=department,
                     )
                 )
+            page += 1
     return jobs
 
 
@@ -588,16 +643,26 @@ def workday(company: str, tenant: str, host: str, site: str, queries: list[str],
     detail_cutoff = datetime.now(timezone.utc) - timedelta(hours=96)
     base = f"https://{host}/wday/cxs/{tenant}/{site}"
     for query in queries:
-        for page in range(pages):
+        page = 0
+        total_pages = max(1, pages)
+        while page < total_pages:
+            if jobs:
+                time.sleep(0.2)
             payload = post_json(
                 f"{base}/jobs",
                 # Several Workday tenants return HTTP 400 for limit=100 even
                 # though their UI uses smaller pages.
                 {"appliedFacets": {}, "limit": 20, "offset": page * 20, "searchText": query},
             )
+            if page == 0 and isinstance(payload, dict):
+                try:
+                    total_pages = min(60, max(1, math.ceil(int(payload.get("total") or 0) / 20)))
+                except (TypeError, ValueError):
+                    total_pages = max(1, pages)
             postings = payload.get("jobPostings", []) if isinstance(payload, dict) else []
             if not postings:
                 break
+            posting_dates: list[datetime | None] = []
             for item in postings:
                 source_id = str(item.get("externalPath", ""))
                 if not source_id or source_id in seen:
@@ -605,6 +670,7 @@ def workday(company: str, tenant: str, host: str, site: str, queries: list[str],
                 seen.add(source_id)
                 title = str(item.get("title", "")).strip()
                 posted = parse_date(item.get("postedOn"))
+                posting_dates.append(posted)
                 detail = item
                 if (
                     re.search(r"engineer|developer|software|backend|frontend|full.?stack|machine learning|\bml\b|\bai\b|data|platform|devops|infrastructure|computer vision|nlp|llm", title, re.I)
@@ -630,6 +696,12 @@ def workday(company: str, tenant: str, host: str, site: str, queries: list[str],
                         updated_at=posted,
                     )
                 )
+            page += 1
+            # Workday returns these result sets newest-first. Once an entire
+            # page is older than the detail lookback, later pages cannot
+            # produce a fresh alert. Keep going when dates are unavailable.
+            if page > 1 and posting_dates and all(date is not None and date < detail_cutoff for date in posting_dates):
+                break
     return jobs
 
 
