@@ -9,6 +9,7 @@ from job_radar.filtering import passes
 from job_radar.models import Job
 from job_radar.sources import ashby, parse_date, search_page_count, workday_job_url
 from job_radar.storage import Store
+from job_radar.telegram import TelegramError, resolve_chat_ids
 
 
 def make_job(title="Software Engineer", description="Build backend services.", source_id="1"):
@@ -131,6 +132,33 @@ class NotificationDeduplicationTests(unittest.TestCase):
             updated, is_new = store.upsert(second)
             self.assertFalse(is_new)
             self.assertIsNotNone(updated.last_sent_at)
+
+
+class TelegramSubscriptionTests(unittest.TestCase):
+    def test_resolves_configured_and_private_start_chats(self):
+        updates = {
+            "result": [
+                {"message": {"chat": {"id": 222, "type": "private"}, "text": "/start"}},
+                {"message": {"chat": {"id": 333, "type": "private"}, "text": "hello"}},
+                {"message": {"chat": {"id": -444, "type": "group"}, "text": "/start"}},
+            ]
+        }
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_CHAT_ID": "111", "TELEGRAM_CHAT_IDS": "555, 666"},
+            clear=False,
+        ), patch("job_radar.telegram.call", return_value=updates):
+            self.assertEqual(resolve_chat_ids("token"), ["111", "222", "555", "666"])
+
+    def test_requires_a_configured_or_started_private_chat(self):
+        with patch.dict(
+            os.environ,
+            {"TELEGRAM_CHAT_ID": "", "TELEGRAM_CHAT_IDS": ""},
+            clear=False,
+        ), patch("job_radar.telegram.call", return_value={"result": []}), self.assertRaisesRegex(
+            TelegramError, "No Telegram subscribers found"
+        ):
+            resolve_chat_ids("token")
 
 
 if __name__ == "__main__":

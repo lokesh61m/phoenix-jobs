@@ -34,18 +34,38 @@ def call(token: str, method: str, values: dict[str, str] | None = None) -> dict:
     return payload
 
 
-def resolve_chat_id(token: str) -> str:
-    configured = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if configured:
-        return configured
+def configured_chat_ids() -> set[str]:
+    """Return explicitly configured recipients, accepting one or many IDs."""
+    values = [
+        os.environ.get("TELEGRAM_CHAT_ID", ""),
+        os.environ.get("TELEGRAM_CHAT_IDS", ""),
+    ]
+    chat_ids: set[str] = set()
+    for value in values:
+        chat_ids.update(item.strip() for item in value.replace("\n", ",").split(",") if item.strip())
+    return chat_ids
+
+
+def resolve_chat_ids(token: str) -> list[str]:
+    """Resolve configured recipients plus private chats that sent /start.
+
+    Telegram keeps updates pending until a consumer advances the update offset.
+    We intentionally do not advance it here: the same subscription signal can
+    be rediscovered on later stateless GitHub Actions runs. Explicit IDs remain
+    supported for users who prefer not to rely on update discovery.
+    """
+    chat_ids = configured_chat_ids()
     payload = call(token, "getUpdates", {"limit": "100", "timeout": "0"})
     updates = payload.get("result", [])
-    for update in reversed(updates):
+    for update in updates:
         message = update.get("message") or update.get("edited_message") or {}
         chat = message.get("chat") or {}
-        if chat.get("type") == "private":
-            return str(chat["id"])
-    raise TelegramError("No private chat found. Open your bot in Telegram and send /start, then run again.")
+        text = str(message.get("text") or "").strip()
+        if chat.get("type") == "private" and text.startswith("/start"):
+            chat_ids.add(str(chat["id"]))
+    if not chat_ids:
+        raise TelegramError("No Telegram subscribers found. Open your bot and send /start, then run again.")
+    return sorted(chat_ids)
 
 
 def format_job(job: Job) -> str:
@@ -59,7 +79,7 @@ def format_job(job: Job) -> str:
     )
 
 
-def send_jobs(token: str, chat_id: str, jobs: list[Job], scanned_at: datetime) -> None:
+def send_jobs(token: str, chat_ids: list[str], jobs: list[Job], scanned_at: datetime) -> None:
     if not jobs:
         return
     header = f"<b>Fresh US software/AI jobs</b> · {scanned_at.strftime('%Y-%m-%d %H:%M UTC')} · {len(jobs)} new\n\n"
@@ -74,5 +94,6 @@ def send_jobs(token: str, chat_id: str, jobs: list[Job], scanned_at: datetime) -
             current += block
     if current.strip():
         chunks.append(current)
-    for chunk in chunks:
-        call(token, "sendMessage", {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": "true"})
+    for chat_id in chat_ids:
+        for chunk in chunks:
+            call(token, "sendMessage", {"chat_id": chat_id, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": "true"})

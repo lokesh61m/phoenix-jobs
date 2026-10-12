@@ -13,7 +13,7 @@ from .filtering import passes
 from .models import Job
 from .sources import SourceError, fetch_source
 from .storage import Store
-from .telegram import TelegramError, resolve_chat_id, send_jobs
+from .telegram import TelegramError, resolve_chat_ids, send_jobs
 
 
 def load_companies(path: Path) -> list[dict[str, str]]:
@@ -75,10 +75,10 @@ def scan(dry_run: bool = False) -> int:
         print("[notify] TELEGRAM_BOT_TOKEN is not configured; jobs remain unsent and will retry next scan")
         return len(new_jobs)
     try:
-        chat_id = resolve_chat_id(token)
-        send_jobs(token, chat_id, new_jobs, now)
+        chat_ids = resolve_chat_ids(token)
+        send_jobs(token, chat_ids, new_jobs, now)
         store.mark_sent(new_jobs, now)
-        print(f"[notify] sent {len(new_jobs)} jobs to Telegram chat {chat_id}")
+        print(f"[notify] sent {len(new_jobs)} jobs to {len(chat_ids)} Telegram subscriber(s)")
     except (TelegramError, OSError) as exc:
         print(f"[notify error] {exc}")
     return len(new_jobs)

@@ -25,7 +25,7 @@ A local monitor for fresh US software, ML, and AI jobs. It checks direct company
 
 2. Put the Telegram bot token from BotFather in `.env`. Do not commit `.env` or share the token.
 
-3. Open the bot in Telegram and send `/start`. The monitor can discover the numeric chat ID automatically from the bot's updates. You may also set `TELEGRAM_CHAT_ID` explicitly.
+3. Open the bot in Telegram and send `/start`. The monitor discovers every private chat that sends `/start`, so multiple subscribers can receive the same alerts. You may also set `TELEGRAM_CHAT_ID` or comma-separated `TELEGRAM_CHAT_IDS` explicitly.
 
 4. Run a test scan:
 
@@ -57,3 +57,5 @@ Add these repository Actions secrets before enabling the workflow:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+
+`TELEGRAM_CHAT_ID` is optional for discovery, but keeping your existing value is fine. Friends only need to open the bot and send `/start`; they will receive future alerts on the next successful scan.
