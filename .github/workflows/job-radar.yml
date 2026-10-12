@@ -1,0 +1,89 @@
+name: Software Job Radar
+
+on:
+  # Offset from the top of the hour, when GitHub reports more schedule load.
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: software-job-radar
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Find latest state artifact
+        id: find_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_id="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired == false and (.name | startswith("job-radar-state-"))) | [.created_at, .id] | @tsv' \
+            | sort | tail -n 1 | cut -f 2)"
+          if [[ -n "${artifact_id}" ]]; then
+            echo "artifact_id=${artifact_id}" >> "${GITHUB_OUTPUT}"
+            echo "Restoring state artifact ${artifact_id}"
+          else
+            echo "No previous state artifact; this is the initial scan"
+          fi
+
+      - name: Restore SQLite state
+        if: steps.find_state.outputs.artifact_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.find_state.outputs.artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: data
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan and notify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          POLL_INTERVAL_MINUTES: "15"
+          LOOKBACK_HOURS: "72"
+          DB_PATH: data/jobs.sqlite3
+          COMPANIES_PATH: config/companies.json
+        run: python -m job_radar --once
+
+      - name: Save SQLite state
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-radar-state-${{ github.run_id }}
+          path: data/jobs.sqlite3
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Remove older state artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_name="job-radar-state-${GITHUB_RUN_ID}"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.expired == false and (.name | startswith(\"job-radar-state-\")) and .name != \"${current_name}\") | .id" \
+            | while read -r artifact_id; do
+                [[ -z "${artifact_id}" ]] || gh api --method DELETE \
+                  "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+              done
