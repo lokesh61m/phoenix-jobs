@@ -6,6 +6,7 @@ from unittest.mock import patch
 from job_radar import app
 from job_radar.filtering import passes
 from job_radar.models import Job
+from job_radar.storage import Store
 
 
 def make_job(title="Software Engineer", description="Build backend services.", source_id="1"):
@@ -49,6 +50,20 @@ class NotificationDeduplicationTests(unittest.TestCase):
                 app, "load_companies", return_value=[{"company": "Example", "type": "test"}]
             ), patch.object(app, "fetch_source", return_value=[first, second]):
                 self.assertEqual(app.scan(dry_run=True), 1)
+
+    def test_changed_description_with_same_source_id_is_not_new(self):
+        first = make_job(source_id="stable-id", description="Build backend services.")
+        second = make_job(source_id="stable-id", description="Build backend services and APIs.")
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(os.path.join(directory, "jobs.sqlite3"))
+            saved, is_new = store.upsert(first)
+            self.assertTrue(is_new)
+            store.mark_sent([saved], saved.first_seen_at)
+
+            updated, is_new = store.upsert(second)
+            self.assertFalse(is_new)
+            self.assertIsNotNone(updated.last_sent_at)
 
 
 if __name__ == "__main__":

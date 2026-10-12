@@ -54,15 +54,33 @@ class Store:
             """
         )
         self.connection.execute("CREATE INDEX IF NOT EXISTS jobs_lookup ON jobs(company, title, location)")
+        self.connection.execute("CREATE INDEX IF NOT EXISTS jobs_source_lookup ON jobs(company, source_type, source_id)")
         self.connection.commit()
 
     def upsert(self, job: Job) -> tuple[Job, bool]:
         job.fingerprint = make_fingerprint(job)
         current = self.connection.execute("SELECT * FROM jobs WHERE fingerprint = ?", (job.fingerprint,)).fetchone()
+        if not current and job.source_type and job.source_id:
+            # A posting's description or URL can change while its source ID
+            # remains stable. Prefer that stable career-page identity before
+            # treating the changed payload as a new posting.
+            current = self.connection.execute(
+                "SELECT * FROM jobs WHERE company = ? AND source_type = ? AND source_id = ? ORDER BY last_seen_at DESC LIMIT 1",
+                (job.company, job.source_type, job.source_id),
+            ).fetchone()
         if current:
+            job.fingerprint = current["fingerprint"]
             self.connection.execute(
-                "UPDATE jobs SET last_seen_at = ?, updated_at = ?, description = ?, categories = ? WHERE fingerprint = ?",
-                (iso(job.last_seen_at), iso(job.updated_at), job.description, ",".join(job.categories), job.fingerprint),
+                """
+                UPDATE jobs SET source_type = ?, source_id = ?, company = ?, title = ?, location = ?,
+                    url = ?, apply_url = ?, published_at = ?, last_seen_at = ?, updated_at = ?,
+                    description = ?, categories = ? WHERE fingerprint = ?
+                """,
+                (
+                    job.source_type, job.source_id, job.company, job.title, job.location,
+                    job.url, job.apply_url, iso(job.published_at), iso(job.last_seen_at),
+                    iso(job.updated_at), job.description, ",".join(job.categories), job.fingerprint,
+                ),
             )
             job.first_seen_at = parse_iso(current["first_seen_at"]) or job.first_seen_at
             job.last_sent_at = parse_iso(current["last_sent_at"])
