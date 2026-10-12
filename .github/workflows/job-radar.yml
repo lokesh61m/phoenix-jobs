@@ -44,12 +44,20 @@ jobs:
 
       - name: Restore SQLite state
         if: steps.find_state.outputs.artifact_id != ''
-        uses: actions/download-artifact@v4
-        with:
-          artifact-ids: ${{ steps.find_state.outputs.artifact_id }}
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          path: data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.find_state.outputs.artifact_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          state_zip="$(mktemp)"
+          if ! gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "${state_zip}"; then
+            echo "State artifact ${ARTIFACT_ID} is unavailable; using the committed database seed"
+            exit 0
+          fi
+          unzip -o "${state_zip}" -d data
 
       - name: Set up Python
         uses: actions/setup-python@v5
