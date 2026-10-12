@@ -1,10 +1,9 @@
 name: Software Job Radar
 
 on:
-  # Public repositories have free standard GitHub-hosted runners. Offset from
-  # the top of the hour to reduce GitHub schedule congestion.
+  # Public repositories have free standard GitHub-hosted runners.
   schedule:
-    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
