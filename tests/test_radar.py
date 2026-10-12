@@ -7,7 +7,7 @@ from unittest.mock import patch
 from job_radar import app
 from job_radar.filtering import passes
 from job_radar.models import Job
-from job_radar.sources import workday_job_url
+from job_radar.sources import ashby, workday_job_url
 from job_radar.storage import Store
 
 
@@ -42,6 +42,23 @@ class FilteringTests(unittest.TestCase):
 
 
 class SourceUrlTests(unittest.TestCase):
+    def test_ashby_uses_stable_id_and_canonical_urls(self):
+        payload = {
+            "jobs": [
+                {
+                    "id": "job-123",
+                    "title": "Software Engineer",
+                    "jobUrl": "https://jobs.ashbyhq.com/example/job-123/application",
+                    "applyUrl": "https://jobs.ashbyhq.com/old-board/removed-job/application",
+                }
+            ]
+        }
+        with patch("job_radar.sources.get_json", return_value=payload):
+            job = ashby("Example", "example")[0]
+        self.assertEqual(job.source_id, "job-123")
+        self.assertEqual(job.url, "https://jobs.ashbyhq.com/example/job-123")
+        self.assertEqual(job.apply_url, "https://jobs.ashbyhq.com/example/job-123/application")
+
     def test_workday_url_includes_site_path(self):
         self.assertEqual(
             workday_job_url(

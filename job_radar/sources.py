@@ -185,6 +185,17 @@ def ashby(company: str, board: str) -> list[Job]:
     payload = get_json(f"https://api.ashbyhq.com/posting-api/job-board/{board}")
     jobs: list[Job] = []
     for item in payload.get("jobs", []) if isinstance(payload, dict) else []:
+        source_id = str(item.get("id") or "").strip()
+        raw_job_url = str(item.get("jobUrl") or "").strip()
+        if source_id:
+            # Ashby's API also returns jobUrl/applyUrl, but the UUID is the
+            # stable identity and lets us rebuild a canonical public URL if a
+            # board returns a stale or malformed URL field.
+            job_url = f"https://jobs.ashbyhq.com/{urllib.parse.quote(board.strip('/'), safe='')}/{urllib.parse.quote(source_id, safe='')}"
+            apply_url = f"{job_url}/application"
+        else:
+            job_url = raw_job_url or str(item.get("applyUrl") or "").strip()
+            apply_url = str(item.get("applyUrl") or "").strip() or f"{job_url}/application"
         location = item.get("location", "")
         if isinstance(location, list):
             location = ", ".join(str(value) for value in location)
@@ -193,11 +204,11 @@ def ashby(company: str, board: str) -> list[Job]:
             Job(
                 company=company,
                 source_type="ashby",
-                source_id=str(item.get("jobUrl", item.get("applyUrl", ""))),
+                source_id=source_id or job_url,
                 title=item.get("title", "").strip(),
                 location=str(location),
-                url=item.get("jobUrl", item.get("applyUrl", "")),
-                apply_url=item.get("applyUrl", item.get("jobUrl", "")),
+                url=job_url,
+                apply_url=apply_url,
                 description=description,
                 published_at=parse_date(item.get("publishedAt")),
                 updated_at=parse_date(item.get("updatedAt")),
