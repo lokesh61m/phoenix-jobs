@@ -145,14 +145,14 @@ def search_page_count(payload: Any, configured_pages: int, maximum_pages: int = 
     return min(maximum_pages, max(1, configured_pages, discovered))
 
 
-def get_page_json(url: str, source_label: str, page: int) -> Any | None:
+def get_page_json(url: str, source_label: str, page: int, first_page: int = 0) -> Any | None:
     """Fetch a paginated JSON page without discarding earlier pages on a burst error."""
     for attempt in range(3):
         try:
             return get_json(url)
         except SourceError as exc:
             if attempt == 2:
-                if page == 0:
+                if page == first_page:
                     raise
                 print(f"[source warning] {source_label}: stopping at page {page} after {exc}")
                 return None
@@ -160,14 +160,14 @@ def get_page_json(url: str, source_label: str, page: int) -> Any | None:
     return None
 
 
-def post_page_json(url: str, payload: dict[str, Any], source_label: str, page: int) -> Any | None:
+def post_page_json(url: str, payload: dict[str, Any], source_label: str, page: int, first_page: int = 0) -> Any | None:
     """POST a paginated JSON page with the same partial-result protection."""
     for attempt in range(3):
         try:
             return post_json(url, payload)
         except SourceError as exc:
             if attempt == 2:
-                if page == 0:
+                if page == first_page:
                     raise
                 print(f"[source warning] {source_label}: stopping at page {page} after {exc}")
                 return None
@@ -646,7 +646,7 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
             params = urllib.parse.urlencode(
                 {"keywords": query, "location": "United States", "page": page, "limit": 20}
             )
-            payload = get_page_json(f"https://careers.amd.com/api/jobs?{params}", company, page)
+            payload = get_page_json(f"https://careers.amd.com/api/jobs?{params}", company, page, first_page=1)
             if payload is None:
                 break
             if page == 1 and isinstance(payload, dict):
