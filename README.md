@@ -8,7 +8,8 @@ A local monitor for fresh US software, ML, and AI jobs. It checks direct company
 - Uses a 72-hour freshness window.
 - Prefers direct company career feeds, including Greenhouse, Lever, Ashby,
   SmartRecruiters, Amazon Jobs, Apple Jobs, Google Careers, Microsoft Careers,
-  Workday, Eightfold, and AMD career sites.
+  Workday, Eightfold, AMD, Goldman Sachs, JPMorgan Chase, Mastercard, and
+  Oracle career sites.
 - Accepts US locations and explicit US-remote roles; rejects ambiguous worldwide/remote listings.
 - Accepts roles whose maximum stated required experience is 3.5 years or less.
 - Excludes titles containing `senior` or `manager`, along with staff, principal, director, and architect titles.
@@ -43,11 +44,11 @@ The first run sends only postings published in the last 72 hours. Later runs sen
 
 ## Source format
 
-Each entry has a company name, source type, and public board identifier. Supported source values are `greenhouse`, `lever`, `ashby`, `smartrecruiters`, `amazon`, `apple`, `google`, `microsoft`, `eightfold`, `amd`, and `workday`.
+Each entry has a company name, source type, and public board identifier. Supported source values are `greenhouse`, `lever`, `ashby`, `smartrecruiters`, `amazon`, `apple`, `google`, `microsoft`, `eightfold`, `amd`, `workday`, `goldman`, `jpmorgan`, and `oracle`.
 
 The source roster is intentionally editable. Public career systems change their board identifiers occasionally, so an unavailable source is logged and skipped without stopping the rest of the scan.
 
-The current roster has 59 active sources. Meta, Uber, ServiceNow, Walmart, and Dell are recorded but disabled until their official portals can be queried without a session-dependent or anti-bot workaround; they are not silently replaced with stale aggregator listings.
+The current roster has 63 active sources. Meta, Uber, ServiceNow, Walmart, and Dell are recorded but disabled until their official portals can be queried without a session-dependent or anti-bot workaround; they are not silently replaced with stale aggregator listings.
 
 ## GitHub Actions deployment
 

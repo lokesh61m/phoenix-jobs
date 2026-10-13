@@ -7,7 +7,14 @@ from unittest.mock import patch
 from job_radar import app
 from job_radar.filtering import passes
 from job_radar.models import Job
-from job_radar.sources import ashby, parse_date, search_page_count, workday_job_url
+from job_radar.sources import (
+    ashby,
+    goldman,
+    jpmorgan,
+    parse_date,
+    search_page_count,
+    workday_job_url,
+)
 from job_radar.storage import Store
 from job_radar.telegram import TelegramError, resolve_chat_ids
 
@@ -100,6 +107,87 @@ class SourceUrlTests(unittest.TestCase):
             ),
             "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/California---San-Francisco/Job_JR123",
         )
+
+    def test_goldman_uses_external_source_id_and_role_url(self):
+        search = {
+            "data": {
+                "roleSearch": {
+                    "totalCount": 1,
+                    "items": [
+                        {
+                            "roleId": "role-1_GS_EARLY_CAREER",
+                            "jobTitle": "Software Engineer - Analyst - New York",
+                            "jobFunction": "Software Engineering",
+                            "locations": [{"city": "New York", "state": "NY", "country": "United States"}],
+                            "externalSource": {"sourceId": "role-1"},
+                        }
+                    ],
+                }
+            }
+        }
+        detail = {
+            "data": {
+                "role": {
+                    "roleId": "role-1_GS_EARLY_CAREER",
+                    "jobTitle": "Software Engineer - Analyst - New York",
+                    "jobFunction": "Software Engineering",
+                    "locations": [{"city": "New York", "state": "NY", "country": "United States"}],
+                    "shortDescription": "Build software.",
+                    "descriptionHtml": "<p>Requires 2+ years of experience.</p>",
+                    "lastPostedDate": "2026-10-13T10:00:00Z",
+                    "lastModifiedDate": "2026-10-13T10:00:00Z",
+                }
+            }
+        }
+        with patch("job_radar.sources.post_json", side_effect=[search, detail]):
+            job = goldman("Goldman Sachs", ["software engineer"], pages=1)[0]
+        self.assertEqual(job.source_id, "role-1")
+        self.assertEqual(job.url, "https://higher.gs.com/roles/role-1")
+        self.assertIn("2+ years", job.description)
+
+    def test_jpmorgan_uses_stable_requisition_id_and_public_detail_url(self):
+        search = {
+            "items": [
+                {
+                    "TotalJobsCount": 1,
+                    "requisitionList": [
+                        {
+                            "Id": "210123456",
+                            "Title": "Software Engineer II",
+                            "PostedDate": "2026-10-13",
+                            "PrimaryLocation": "Jersey City, NJ, United States",
+                            "secondaryLocations": [],
+                            "JobFamily": "Software Engineering",
+                            "JobFunction": "Technology",
+                        }
+                    ],
+                }
+            ]
+        }
+        detail = {
+            "items": [
+                {
+                    "Id": "210123456",
+                    "Title": "Software Engineer II",
+                    "ExternalPostedStartDate": "2026-10-13T10:00:00+00:00",
+                    "ExternalDescriptionStr": "<p>Requires 2+ years of experience.</p>",
+                }
+            ]
+        }
+        with patch("job_radar.sources.get_json", side_effect=[search, detail]):
+            job = jpmorgan(
+                "JPMorgan Chase",
+                "jpmc.fa.oraclecloud.com",
+                "CX_1001",
+                ["software engineer"],
+                pages=1,
+            )[0]
+        self.assertEqual(job.source_id, "210123456")
+        self.assertEqual(
+            job.url,
+            "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210123456",
+        )
+        self.assertIn("2+ years", job.description)
 
 
 class NotificationDeduplicationTests(unittest.TestCase):

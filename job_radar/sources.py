@@ -125,6 +125,18 @@ def post_json(url: str, payload: dict[str, Any]) -> Any:
             raise SourceError(f"{url}: {exc}") from exc
 
 
+def graphql_json(url: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    payload = post_json(url, {"query": query, "variables": variables})
+    if not isinstance(payload, dict):
+        raise SourceError(f"{url}: GraphQL response was not an object")
+    if payload.get("errors"):
+        raise SourceError(f"{url}: GraphQL errors: {payload['errors']}")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise SourceError(f"{url}: GraphQL response did not contain data")
+    return data
+
+
 def get_text(url: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/html"})
     try:
@@ -777,6 +789,319 @@ def workday(company: str, tenant: str, host: str, site: str, queries: list[str],
     return jobs
 
 
+GOLDMAN_GRAPHQL_URL = "https://api-higher.gs.com/gateway/api/v1/graphql"
+GOLDMAN_SEARCH_QUERY = """
+query GetRoles($searchQueryInput: RoleSearchQueryInput!) {
+  roleSearch(searchQueryInput: $searchQueryInput) {
+    totalCount
+    items {
+      roleId
+      corporateTitle
+      jobTitle
+      jobFunction
+      locations { primary state country city }
+      status
+      division
+      skills
+      jobType { code description }
+      externalSource { sourceId }
+    }
+  }
+}
+"""
+GOLDMAN_DETAIL_QUERY = """
+query GetRole($id: String!, $fetch: Boolean) {
+  role(externalSourceId: $id, externalSourceFetch: $fetch) {
+    roleId
+    corporateTitle
+    jobTitle
+    jobFunction
+    locations { primary state country city }
+    status
+    division
+    shortDescription
+    descriptionHtml
+    skills
+    lastPostedDate
+    createdDate
+    lastModifiedDate
+    jobType { code description }
+    externalJobStatus
+    applyActive
+    recruitingType
+    educationLevel
+  }
+}
+"""
+TECHNICAL_SOURCE_TERMS = re.compile(
+    r"software|engineer|engineering|developer|backend|platform|infrastructure|"
+    r"machine learning|artificial intelligence|\bai\b|\bml\b|data|quantitative",
+    re.I,
+)
+
+
+def _location_text(locations: Any) -> str:
+    if not isinstance(locations, list):
+        return str(locations or "")
+    values: list[str] = []
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        text = ", ".join(
+            str(location.get(key, "")).strip()
+            for key in ("city", "state", "country")
+            if str(location.get(key, "")).strip()
+        )
+        if text and text not in values:
+            values.append(text)
+    return "; ".join(values)
+
+
+def goldman(company: str, queries: list[str], pages: int = 2) -> list[Job]:
+    """Read Goldman Sachs roles from the public Higher GS GraphQL API."""
+    jobs: list[Job] = []
+    seen: set[str] = set()
+    detail_cutoff = datetime.now(timezone.utc) - timedelta(hours=96)
+    page_size = 100
+    for query in queries:
+        page = 0
+        total_pages = max(1, pages)
+        while page < total_pages:
+            payload = post_page_json(
+                GOLDMAN_GRAPHQL_URL,
+                {
+                    "query": GOLDMAN_SEARCH_QUERY,
+                    "variables": {
+                        "searchQueryInput": {
+                            "page": {"pageSize": page_size, "pageNumber": page},
+                            "sort": {"sortStrategy": "POSTED_DATE", "sortOrder": "DESC"},
+                            "filters": [],
+                            "experiences": ["EARLY_CAREER", "PROFESSIONAL"],
+                            "searchTerm": query,
+                        }
+                    },
+                },
+                company,
+                page,
+            )
+            if payload is None:
+                break
+            result = ((payload.get("data") or {}).get("roleSearch") or {}) if isinstance(payload, dict) else {}
+            if page == 0:
+                try:
+                    total_pages = min(20, max(1, pages, math.ceil(int(result.get("totalCount") or 0) / page_size)))
+                except (TypeError, ValueError):
+                    total_pages = max(1, pages)
+            items = result.get("items") or []
+            if not items:
+                break
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                source = item.get("externalSource") or {}
+                source_id = str(source.get("sourceId") or item.get("roleId") or "").strip()
+                if not source_id or source_id in seen:
+                    continue
+                title = str(item.get("jobTitle") or "").strip()
+                function = str(item.get("jobFunction") or "")
+                if not TECHNICAL_SOURCE_TERMS.search(f"{title} {function}"):
+                    continue
+                seen.add(source_id)
+                detail: dict[str, Any] = item
+                try:
+                    detail = (
+                        graphql_json(
+                            GOLDMAN_GRAPHQL_URL,
+                            GOLDMAN_DETAIL_QUERY,
+                            {"id": source_id, "fetch": True},
+                        ).get("role")
+                        or item
+                    )
+                except SourceError:
+                    # Search results still contain enough metadata to retain
+                    # the posting when a single detail request is throttled.
+                    detail = item
+                posted = parse_date(detail.get("lastPostedDate") or detail.get("createdDate"))
+                if posted is not None and posted < detail_cutoff and detail is item:
+                    # Do not perform any more work for clearly stale fallback
+                    # records. The global freshness filter will discard them.
+                    continue
+                final_title = str(detail.get("jobTitle") or title).strip()
+                locations = detail.get("locations") or item.get("locations") or []
+                detail_url = f"https://higher.gs.com/roles/{urllib.parse.quote(source_id, safe='')}"
+                description = " ".join(
+                    str(detail.get(key, ""))
+                    for key in ("shortDescription", "descriptionHtml")
+                )
+                jobs.append(
+                    Job(
+                        company=company,
+                        source_type="goldman",
+                        source_id=source_id,
+                        title=final_title,
+                        location=_location_text(locations),
+                        url=detail_url,
+                        apply_url=detail_url,
+                        description=strip_html(description),
+                        published_at=posted,
+                        updated_at=parse_date(detail.get("lastModifiedDate") or detail.get("lastPostedDate")),
+                        department=str(detail.get("jobFunction") or item.get("jobFunction") or ""),
+                    )
+                )
+            page += 1
+    return jobs
+
+
+def _oracle_finder_url(
+    host: str,
+    site: str,
+    query: str,
+    limit: int,
+    offset: int,
+    posting_days: str = "7",
+    us_location_id: str = "300000000289738",
+) -> str:
+    values = [
+        ("siteNumber", site),
+        ("keyword", query),
+        ("selectedPostingDatesFacet", posting_days),
+        ("selectedLocationsFacet", us_location_id),
+        ("sortBy", "POSTING_DATE"),
+        ("limit", str(limit)),
+        ("offset", str(offset)),
+    ]
+    finder = ",".join(f"{key}={urllib.parse.quote(value, safe='')}" for key, value in values)
+    return (
+        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+        f"?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;{finder}"
+    )
+
+
+def jpmorgan(
+    company: str,
+    host: str,
+    site: str,
+    queries: list[str],
+    pages: int = 3,
+    posting_days: str = "7",
+    us_location_id: str = "300000000289738",
+    source_type: str = "jpmorgan",
+    public_host: str | None = None,
+    public_prefix: str | None = None,
+) -> list[Job]:
+    """Read JPMorgan Chase roles from its public Oracle Recruiting Cloud API."""
+    jobs: list[Job] = []
+    seen: set[str] = set()
+    detail_cutoff = datetime.now(timezone.utc) - timedelta(hours=96)
+    page_size = 100
+    detail_base = f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+    for query in queries:
+        page = 0
+        total_pages = max(1, pages)
+        while page < total_pages:
+            payload = get_page_json(
+                _oracle_finder_url(host, site, query, page_size, page * page_size, posting_days, us_location_id),
+                company,
+                page,
+            )
+            if payload is None:
+                break
+            wrappers = payload.get("items", []) if isinstance(payload, dict) else []
+            wrapper = wrappers[0] if wrappers and isinstance(wrappers[0], dict) else {}
+            if page == 0:
+                try:
+                    total_pages = min(20, max(1, pages, math.ceil(int(wrapper.get("TotalJobsCount") or 0) / page_size)))
+                except (TypeError, ValueError):
+                    total_pages = max(1, pages)
+            postings = wrapper.get("requisitionList") or []
+            if not postings:
+                break
+            for item in postings:
+                if not isinstance(item, dict):
+                    continue
+                source_id = str(item.get("Id") or item.get("RequisitionId") or "").strip()
+                if not source_id or source_id in seen:
+                    continue
+                seen.add(source_id)
+                title = str(item.get("Title") or "").strip()
+                posted = parse_date(item.get("PostedDate"))
+                detail: dict[str, Any] = item
+                # The list has a date and short description. Fetch the full
+                # requisition only for fresh technical titles so the frequent
+                # monitor does not download thousands of stale records.
+                if (
+                    TECHNICAL_SOURCE_TERMS.search(f"{title} {item.get('JobFamily', '')} {item.get('JobFunction', '')}")
+                    and (posted is None or posted >= detail_cutoff)
+                ):
+                    detail_url = f"{detail_base}?expand=all&onlyData=true&finder=ById;Id={urllib.parse.quote(source_id, safe='')}"
+                    try:
+                        detail_items = (get_json(detail_url) or {}).get("items", [])
+                        if detail_items and isinstance(detail_items[0], dict):
+                            detail = detail_items[0]
+                    except SourceError:
+                        detail = item
+                final_title = str(detail.get("Title") or title).strip()
+                locations = [str(item.get("PrimaryLocation") or "").strip()]
+                locations.extend(
+                    str(location.get("Name") or "").strip()
+                    for location in (item.get("secondaryLocations") or [])
+                    if isinstance(location, dict)
+                )
+                locations = [location for location in dict.fromkeys(locations) if location]
+                canonical_host = public_host or host
+                canonical_prefix = public_prefix or f"/hcmUI/CandidateExperience/en/sites/{site}/job"
+                detail_url = f"https://{canonical_host}{canonical_prefix}/{urllib.parse.quote(source_id, safe='')}"
+                description = " ".join(
+                    str(detail.get(key, ""))
+                    for key in ("ShortDescriptionStr", "ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr")
+                )
+                precise_posted = parse_date(detail.get("ExternalPostedStartDate")) or posted
+                jobs.append(
+                    Job(
+                        company=company,
+                        source_type=source_type,
+                        source_id=source_id,
+                        title=final_title,
+                        location="; ".join(locations),
+                        url=detail_url,
+                        apply_url=detail_url,
+                        description=strip_html(description),
+                        published_at=precise_posted,
+                        updated_at=precise_posted,
+                        workplace_type=str(item.get("WorkplaceType") or item.get("WorkplaceTypeCode") or ""),
+                        department=str(item.get("JobFamily") or item.get("JobFunction") or ""),
+                    )
+                )
+            page += 1
+    return jobs
+
+
+def oracle(
+    company: str,
+    host: str,
+    site: str,
+    queries: list[str],
+    pages: int = 3,
+    posting_days: str = "7",
+    us_location_id: str = "300000000149325",
+    public_host: str = "careers.oracle.com",
+    public_prefix: str = "/en/sites/jobsearch/job",
+) -> list[Job]:
+    """Read Oracle roles from Oracle's public Recruiting Cloud career feed."""
+    return jpmorgan(
+        company,
+        host,
+        site,
+        queries,
+        pages,
+        posting_days,
+        us_location_id,
+        source_type="oracle",
+        public_host=public_host,
+        public_prefix=public_prefix,
+    )
+
+
 def fetch_source(entry: dict[str, str]) -> list[Job]:
     source_type = entry["type"].lower()
     if source_type == "greenhouse":
@@ -801,4 +1126,28 @@ def fetch_source(entry: dict[str, str]) -> list[Job]:
         return amd(entry["company"], entry.get("queries", ["software engineer", "machine learning", "platform engineer"]), int(entry.get("pages", 2)))
     if source_type == "workday":
         return workday(entry["company"], entry["tenant"], entry["host"], entry["site"], entry.get("queries", ["software engineer", "machine learning", "platform engineer"]), int(entry.get("pages", 5)))
+    if source_type == "goldman":
+        return goldman(entry["company"], entry.get("queries", ["software engineer", "machine learning", "platform engineer"]), int(entry.get("pages", 2)))
+    if source_type == "jpmorgan":
+        return jpmorgan(
+            entry["company"],
+            entry["host"],
+            entry["site"],
+            entry.get("queries", ["software engineer", "machine learning", "AI engineer"]),
+            int(entry.get("pages", 3)),
+            entry.get("posting_days", "7"),
+            entry.get("us_location_id", "300000000289738"),
+        )
+    if source_type == "oracle":
+        return oracle(
+            entry["company"],
+            entry["host"],
+            entry["site"],
+            entry.get("queries", ["software engineer", "machine learning", "AI engineer"]),
+            int(entry.get("pages", 3)),
+            entry.get("posting_days", "7"),
+            entry.get("us_location_id", "300000000149325"),
+            entry.get("public_host", "careers.oracle.com"),
+            entry.get("public_prefix", "/en/sites/jobsearch/job"),
+        )
     raise SourceError(f"Unsupported source type: {source_type}")
