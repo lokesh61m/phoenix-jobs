@@ -41,6 +41,18 @@ class FilteringTests(unittest.TestCase):
     def test_allows_higher_preferred_experience(self):
         self.assertTrue(passes(make_job(description="5+ years preferred; 3 years required.")))
 
+    def test_allows_higher_experience_in_a_preferred_section(self):
+        self.assertTrue(
+            passes(
+                make_job(
+                    description=(
+                        "Required Qualifications: Bachelor's degree and 2+ years of experience. "
+                        "Preferred Qualifications: Master's degree and 5+ years of experience."
+                    )
+                )
+            )
+        )
+
 
 class SourceUrlTests(unittest.TestCase):
     def test_search_page_count_uses_api_total(self):

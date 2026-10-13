@@ -7,7 +7,7 @@ from .models import Job
 
 
 ROLE_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
-    ("Software Engineer", ("software engineer", "software development engineer", "software developer")),
+    ("Software Engineer", ("software engineer", "software development engineer", "software developer", "sde")),
     ("Backend / distributed systems", ("backend", "back-end", "distributed systems", "distributed computing")),
     ("Full-stack", ("full stack", "full-stack", "frontend", "front-end", "web engineer")),
     ("ML Engineer", ("machine learning engineer", "ml engineer", "machine learning")),
@@ -49,6 +49,12 @@ NON_US_MARKERS = (
 
 MAX_REQUIRED_YEARS = 3.5
 OPTIONAL_EXPERIENCE_MARKERS = ("preferred", "nice to have", "bonus", "plus")
+OPTIONAL_SECTION_MARKERS = re.compile(
+    r"\b(?:preferred|desired|nice to have|bonus)\s+(?:qualifications?|requirements?|experience|skills?)?\b"
+)
+REQUIRED_SECTION_MARKERS = re.compile(
+    r"\b(?:required|basic|minimum)\s+(?:qualifications?|requirements?|experience|skills?)\b"
+)
 
 
 def normalized(value: str) -> str:
@@ -101,8 +107,18 @@ def passes_experience(job: Job) -> bool:
     number = r"\d+(?:\.\d+)?"
 
     def is_optional(match: re.Match[str]) -> bool:
-        start = max(0, match.start() - 120)
-        end = min(len(text), match.end() + 120)
+        # A preferred-qualifications section can be separated from its years
+        # phrase by a long degree/skills bullet. Looking only a few characters
+        # around the number incorrectly rejected valid jobs such as a role
+        # requiring 2+ years but preferring 5+ years.
+        before = text[:match.start()]
+        last_optional = list(OPTIONAL_SECTION_MARKERS.finditer(before))
+        last_required = list(REQUIRED_SECTION_MARKERS.finditer(before))
+        if last_optional and (not last_required or last_optional[-1].start() > last_required[-1].start()):
+            return True
+
+        start = max(0, match.start() - 240)
+        end = min(len(text), match.end() + 240)
         context = text[start:end]
         return any(marker in context for marker in OPTIONAL_EXPERIENCE_MARKERS)
 

@@ -145,6 +145,36 @@ def search_page_count(payload: Any, configured_pages: int, maximum_pages: int = 
     return min(maximum_pages, max(1, configured_pages, discovered))
 
 
+def get_page_json(url: str, source_label: str, page: int) -> Any | None:
+    """Fetch a paginated JSON page without discarding earlier pages on a burst error."""
+    for attempt in range(3):
+        try:
+            return get_json(url)
+        except SourceError as exc:
+            if attempt == 2:
+                if page == 0:
+                    raise
+                print(f"[source warning] {source_label}: stopping at page {page} after {exc}")
+                return None
+            time.sleep(2.0 * (attempt + 1))
+    return None
+
+
+def post_page_json(url: str, payload: dict[str, Any], source_label: str, page: int) -> Any | None:
+    """POST a paginated JSON page with the same partial-result protection."""
+    for attempt in range(3):
+        try:
+            return post_json(url, payload)
+        except SourceError as exc:
+            if attempt == 2:
+                if page == 0:
+                    raise
+                print(f"[source warning] {source_label}: stopping at page {page} after {exc}")
+                return None
+            time.sleep(2.0 * (attempt + 1))
+    return None
+
+
 def greenhouse(company: str, board: str) -> list[Job]:
     payload = get_json(f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true")
     jobs: list[Job] = []
@@ -295,7 +325,9 @@ def amazon(company: str, queries: list[str]) -> list[Job]:
                     "result_limit": 100,
                 }
             )
-            payload = get_json(url)
+            payload = get_page_json(url, company, page)
+            if payload is None:
+                break
             if page == 0 and isinstance(payload, dict):
                 try:
                     total_pages = min(20, max(1, math.ceil(int(payload.get("hits") or 0) / 100)))
@@ -335,9 +367,12 @@ def amazon(company: str, queries: list[str]) -> list[Job]:
 def apple(company: str, queries: list[str], pages: int = 3) -> list[Job]:
     jobs: list[Job] = []
     seen: set[str] = set()
+    detail_cutoff = datetime.now(timezone.utc) - timedelta(hours=96)
     for query in queries:
-        for page in range(pages):
-            payload = post_json(
+        page = 0
+        total_pages = max(1, pages)
+        while page < total_pages:
+            payload = post_page_json(
                 "https://jobs.apple.com/api/v1/search",
                 {
                     "query": query,
@@ -347,17 +382,33 @@ def apple(company: str, queries: list[str], pages: int = 3) -> list[Job]:
                     "sort": "newest",
                     "format": {"longDate": "MMMM D, YYYY", "mediumDate": "MMM D, YYYY"},
                 },
+                company,
+                page,
             )
+            if payload is None:
+                break
+            if page == 0:
+                try:
+                    total_records = int((payload.get("res") or {}).get("totalRecords") or 0)
+                    total_pages = min(60, max(1, pages, math.ceil(total_records / 20)))
+                except (TypeError, ValueError):
+                    total_pages = max(1, pages)
             results = (payload.get("res") or {}).get("searchResults", [])
             if not results:
                 break
+            posting_dates: list[datetime | None] = []
             for item in results:
                 source_id = str(item.get("positionId") or item.get("reqId") or "")
                 if not source_id or source_id in seen:
                     continue
                 seen.add(source_id)
+                posted = parse_date(item.get("postDateInGMT") or item.get("postingDate"))
+                posting_dates.append(posted)
                 detail = item
-                if re.search(r"engineer|developer|software|backend|frontend|machine learning|\bml\b|\bai\b|data|platform|devops|infrastructure|computer vision|nlp|llm", str(item.get("postingTitle", "")), re.I):
+                if (
+                    re.search(r"engineer|developer|software|backend|frontend|machine learning|\bml\b|\bai\b|data|platform|devops|infrastructure|computer vision|nlp|llm", str(item.get("postingTitle", "")), re.I)
+                    and (posted is None or posted >= detail_cutoff)
+                ):
                     try:
                         detail = (get_json(f"https://jobs.apple.com/api/v1/jobDetails/{source_id}") or {}).get("res", item)
                     except SourceError:
@@ -379,11 +430,14 @@ def apple(company: str, queries: list[str], pages: int = 3) -> list[Job]:
                         url=url,
                         apply_url=url,
                         description=strip_html(description),
-                        published_at=parse_date(item.get("postDateInGMT") or item.get("postingDate")),
-                        updated_at=parse_date(item.get("postDateInGMT") or item.get("postingDate")),
+                        published_at=posted,
+                        updated_at=posted,
                         department=str((item.get("team") or {}).get("teamName", "")) if isinstance(item.get("team"), dict) else "",
                     )
                 )
+            page += 1
+            if page > 1 and posting_dates and all(date is not None and date < detail_cutoff for date in posting_dates):
+                break
     return jobs
 
 
@@ -396,7 +450,13 @@ def google(company: str, queries: list[str], pages: int = 2) -> list[Job]:
             if page > 1:
                 params["page"] = str(page)
             url = "https://www.google.com/about/careers/applications/jobs/results/?" + urllib.parse.urlencode(params)
-            body = get_text(url)
+            try:
+                body = get_text(url)
+            except SourceError as exc:
+                if page == 1:
+                    raise
+                print(f"[source warning] {company}: stopping Google page {page} after {exc}")
+                break
             headings = list(re.finditer(r'<h3 class="QJPWVe">(.*?)</h3>', body, re.I | re.S))
             for index, heading in enumerate(headings):
                 end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
@@ -448,7 +508,11 @@ def microsoft(company: str, queries: list[str], pages: int = 3) -> list[Job]:
             params = urllib.parse.urlencode(
                 {"domain": "microsoft.com", "query": query, "location": "United States", "start": start, "sort_by": "date"}
             )
-            payload = get_json(f"https://apply.careers.microsoft.com/api/pcsx/search?{params}")
+            payload = get_page_json(
+                f"https://apply.careers.microsoft.com/api/pcsx/search?{params}", company, page
+            )
+            if payload is None:
+                break
             if page == 0:
                 total_pages = search_page_count(payload, pages)
             data = payload.get("data") or {}
@@ -518,7 +582,9 @@ def eightfold(company: str, host: str, domain: str, queries: list[str], pages: i
                     "sort_by": "date",
                 }
             )
-            payload = get_json(f"https://{host}/api/pcsx/search?{params}")
+            payload = get_page_json(f"https://{host}/api/pcsx/search?{params}", company, page)
+            if payload is None:
+                break
             if page == 0:
                 total_pages = search_page_count(payload, pages)
             positions = ((payload.get("data") or {}).get("positions") or []) if isinstance(payload, dict) else []
@@ -580,7 +646,9 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
             params = urllib.parse.urlencode(
                 {"keywords": query, "location": "United States", "page": page, "limit": 20}
             )
-            payload = get_json(f"https://careers.amd.com/api/jobs?{params}")
+            payload = get_page_json(f"https://careers.amd.com/api/jobs?{params}", company, page)
+            if payload is None:
+                break
             if page == 1 and isinstance(payload, dict):
                 try:
                     total_pages = min(30, max(1, math.ceil(int(payload.get("totalCount") or payload.get("count") or 0) / 20)))
@@ -648,12 +716,16 @@ def workday(company: str, tenant: str, host: str, site: str, queries: list[str],
         while page < total_pages:
             if jobs:
                 time.sleep(0.2)
-            payload = post_json(
+            payload = post_page_json(
                 f"{base}/jobs",
                 # Several Workday tenants return HTTP 400 for limit=100 even
                 # though their UI uses smaller pages.
                 {"appliedFacets": {}, "limit": 20, "offset": page * 20, "searchText": query},
+                company,
+                page,
             )
+            if payload is None:
+                break
             if page == 0 and isinstance(payload, dict):
                 try:
                     total_pages = min(60, max(1, math.ceil(int(payload.get("total") or 0) / 20)))
