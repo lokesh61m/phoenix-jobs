@@ -5,7 +5,7 @@ A local monitor for fresh US software, ML, and AI jobs. It checks direct company
 ## Current behavior
 
 - The external cron-job.org scheduler refreshes every 5 minutes.
-- Uses a 72-hour freshness window.
+- Uses a 24-hour freshness window.
 - Prefers direct company career feeds, including Greenhouse, Lever, Ashby,
   SmartRecruiters, Amazon Jobs, Apple Jobs, Google Careers, Microsoft Careers,
   Workday, Eightfold, AMD, Goldman Sachs, JPMorgan Chase, Mastercard, and
@@ -40,7 +40,7 @@ A local monitor for fresh US software, ML, and AI jobs. It checks direct company
    python3 -m job_radar
    ```
 
-The first run sends only postings published in the last 72 hours. Later runs send only newly discovered postings. Add or edit sources in `config/companies.json`.
+The first run sends only postings published in the last 24 hours. Later runs send only newly discovered postings. Add or edit sources in `config/companies.json`.
 
 ## Source format
 

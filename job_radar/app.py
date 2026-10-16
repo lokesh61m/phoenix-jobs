@@ -27,7 +27,7 @@ def is_fresh(job: Job, cutoff: datetime) -> bool:
 
 def scan(dry_run: bool = False) -> int:
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=env_int("LOOKBACK_HOURS", 72))
+    cutoff = now - timedelta(hours=env_int("LOOKBACK_HOURS", 24))
     store = Store(str(db_path()))
     pending_jobs: dict[str, Job] = {}
     source_count = 0
