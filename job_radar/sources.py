@@ -676,6 +676,7 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
                     continue
                 seen.add(source_id)
                 slug = str(item.get("slug") or source_id)
+                job_url = f"https://careers.amd.com/careers-home/jobs/{urllib.parse.quote(slug, safe='')}"
                 apply_url = str(item.get("apply_url") or f"https://careers.amd.com/careers-home/jobs/{slug}")
                 categories = item.get("categories") or []
                 if isinstance(categories, list):
@@ -696,7 +697,7 @@ def amd(company: str, queries: list[str], pages: int = 2) -> list[Job]:
                         source_id=source_id,
                         title=str(item.get("title", "")).strip(),
                         location=str(item.get("location_name") or ""),
-                        url=apply_url,
+                        url=job_url,
                         apply_url=apply_url,
                         description=strip_html(description),
                         published_at=parse_date(item.get("posted_date")),

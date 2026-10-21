@@ -8,6 +8,7 @@ from job_radar import app
 from job_radar.filtering import passes
 from job_radar.models import Job
 from job_radar.sources import (
+    amd,
     ashby,
     goldman,
     jpmorgan,
@@ -16,7 +17,7 @@ from job_radar.sources import (
     workday_job_url,
 )
 from job_radar.storage import Store
-from job_radar.telegram import TelegramError, resolve_chat_ids
+from job_radar.telegram import TelegramError, format_job, resolve_chat_ids
 
 
 def make_job(title="Software Engineer", description="Build backend services.", source_id="1"):
@@ -88,6 +89,31 @@ class SourceUrlTests(unittest.TestCase):
         self.assertEqual(job.url, "https://jobs.ashbyhq.com/example/job-123")
         self.assertEqual(job.apply_url, "https://jobs.ashbyhq.com/example/job-123/application")
 
+    def test_amd_uses_public_job_page_for_telegram_link(self):
+        payload = {
+            "jobs": [
+                {
+                    "data": {
+                        "req_id": "123",
+                        "slug": "123",
+                        "title": "Software Engineer",
+                        "location_name": "Austin, TX, United States",
+                        "apply_url": "https://careers-amd.icims.com/jobs/123/login",
+                        "posted_date": "2026-10-19",
+                    }
+                }
+            ]
+        }
+        with patch("job_radar.sources.get_page_json", return_value=payload):
+            job = amd("AMD", ["software engineer"], pages=1)[0]
+
+        self.assertEqual(job.url, "https://careers.amd.com/careers-home/jobs/123")
+        self.assertEqual(job.apply_url, "https://careers-amd.icims.com/jobs/123/login")
+        rendered = format_job(job)
+        self.assertIn('href="https://careers.amd.com/careers-home/jobs/123"', rendered)
+        self.assertIn(">View job</a>", rendered)
+        self.assertNotIn("careers-amd.icims.com", rendered)
+
     def test_workday_url_includes_site_path(self):
         self.assertEqual(
             workday_job_url(
@@ -146,6 +172,7 @@ class SourceUrlTests(unittest.TestCase):
         self.assertIn("2+ years", job.description)
 
     def test_jpmorgan_uses_stable_requisition_id_and_public_detail_url(self):
+        recent_date = datetime.now(timezone.utc).date().isoformat()
         search = {
             "items": [
                 {
@@ -154,7 +181,7 @@ class SourceUrlTests(unittest.TestCase):
                         {
                             "Id": "210123456",
                             "Title": "Software Engineer II",
-                            "PostedDate": "2026-10-13",
+                            "PostedDate": recent_date,
                             "PrimaryLocation": "Jersey City, NJ, United States",
                             "secondaryLocations": [],
                             "JobFamily": "Software Engineering",
@@ -169,7 +196,7 @@ class SourceUrlTests(unittest.TestCase):
                 {
                     "Id": "210123456",
                     "Title": "Software Engineer II",
-                    "ExternalPostedStartDate": "2026-10-13T10:00:00+00:00",
+                    "ExternalPostedStartDate": f"{recent_date}T10:00:00+00:00",
                     "ExternalDescriptionStr": "<p>Requires 2+ years of experience.</p>",
                 }
             ]

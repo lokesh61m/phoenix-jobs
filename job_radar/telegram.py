@@ -72,10 +72,15 @@ def format_job(job: Job) -> str:
     published = job.published_at.strftime("%Y-%m-%d") if job.published_at else "date not provided"
     location = html.escape(job.location or "US")
     categories = ", ".join(job.categories)
+    # AMD's application endpoint opens an iCIMS login/application flow. Show
+    # the public AMD job description first so the role can be reviewed before
+    # applying.
+    target_url = job.url if job.source_type == "amd" else (job.apply_url or job.url)
+    link_label = "View job" if job.source_type == "amd" else "Apply directly"
     return (
         f"<b>{html.escape(job.title)}</b> — {html.escape(job.company)}\n"
         f"{location} · {html.escape(categories)} · posted {published}\n"
-        f"<a href=\"{html.escape(job.apply_url or job.url, quote=True)}\">Apply directly</a>"
+        f"<a href=\"{html.escape(target_url, quote=True)}\">{link_label}</a>"
     )
 
 
