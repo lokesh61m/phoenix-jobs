@@ -71,7 +71,16 @@ jobs:
           COMPANIES_PATH: config/companies.json
         run: python -m job_radar --once
 
+      - name: Send Tsenta shortlist to separate Telegram bot
+        env:
+          TSENTA_TELEGRAM_BOT_TOKEN: ${{ secrets.TSENTA_TELEGRAM_BOT_TOKEN }}
+          TSENTA_PROFILE_SKILLS: ${{ secrets.TSENTA_PROFILE_SKILLS }}
+          DB_PATH: data/jobs.sqlite3
+        run: python -m job_radar.tsenta_telegram
+
       - name: Save SQLite state
+        id: upload_state
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: job-radar-state-${{ github.run_id }}
@@ -80,6 +89,7 @@ jobs:
           retention-days: 3
 
       - name: Remove older state artifacts
+        if: always() && steps.upload_state.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

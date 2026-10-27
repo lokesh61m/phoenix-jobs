@@ -4,6 +4,7 @@ import html
 import json
 import os
 import ssl
+import uuid
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -32,6 +33,32 @@ def call(token: str, method: str, values: dict[str, str] | None = None) -> dict:
     if not payload.get("ok"):
         raise TelegramError(payload.get("description", f"Telegram {method} failed"))
     return payload
+
+
+def send_text_document(token: str, chat_id: str, filename: str, content: str, caption: str) -> None:
+    """Send a full JD as one atomic Telegram document, avoiding 4096-char splits."""
+    boundary = f"job-radar-{uuid.uuid4().hex}"
+    body = bytearray()
+    fields = {"chat_id": chat_id, "caption": caption[:900]}
+    for key, value in fields.items():
+        body.extend(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n".encode())
+        body.extend(value.encode("utf-8"))
+        body.extend(b"\r\n")
+    body.extend(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"{filename}\"\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n\r\n".encode()
+    )
+    body.extend(content.encode("utf-8"))
+    body.extend(f"\r\n--{boundary}--\r\n".encode())
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendDocument",
+        data=bytes(body),
+        headers={"User-Agent": "SoftwareJobRadar/0.1", "Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not payload.get("ok"):
+        raise TelegramError(payload.get("description", "Telegram sendDocument failed"))
 
 
 def configured_chat_ids() -> set[str]:

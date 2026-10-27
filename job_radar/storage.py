@@ -28,6 +28,12 @@ def make_fingerprint(job: Job) -> str:
     return hashlib.sha256(stable.encode("utf-8")).hexdigest()
 
 
+def tsenta_source_key(job: Job) -> str:
+    if job.source_type and job.source_id:
+        return f"{compact(job.company)}|{job.source_type}|{job.source_id}"
+    return f"fingerprint|{job.fingerprint}"
+
+
 class Store:
     def __init__(self, path: str) -> None:
         self.connection = sqlite3.connect(path)
@@ -55,7 +61,49 @@ class Store:
         )
         self.connection.execute("CREATE INDEX IF NOT EXISTS jobs_lookup ON jobs(company, title, location)")
         self.connection.execute("CREATE INDEX IF NOT EXISTS jobs_source_lookup ON jobs(company, source_type, source_id)")
+        self.connection.execute(
+            """CREATE TABLE IF NOT EXISTS tsenta_notifications (
+                fingerprint TEXT PRIMARY KEY,
+                source_key TEXT NOT NULL UNIQUE,
+                sent_at TEXT NOT NULL
+            )"""
+        )
         self.connection.commit()
+
+    def recent_jobs(self, cutoff: datetime) -> list[Job]:
+        rows = self.connection.execute(
+            "SELECT * FROM jobs WHERE last_seen_at >= ? ORDER BY last_seen_at DESC", (iso(cutoff),)
+        ).fetchall()
+        return [
+            Job(
+                company=row["company"], source_type=row["source_type"], source_id=row["source_id"],
+                title=row["title"], location=row["location"], url=row["url"],
+                apply_url=row["apply_url"], description=row["description"],
+                published_at=parse_iso(row["published_at"]), updated_at=parse_iso(row["updated_at"]),
+                first_seen_at=parse_iso(row["first_seen_at"]) or datetime.now(timezone.utc),
+                last_seen_at=parse_iso(row["last_seen_at"]) or datetime.now(timezone.utc),
+                last_sent_at=parse_iso(row["last_sent_at"]), fingerprint=row["fingerprint"],
+                categories=row["categories"].split(",") if row["categories"] else [],
+            )
+            for row in rows
+        ]
+
+    def tsenta_notified(self, job: Job) -> bool:
+        return self.connection.execute(
+            "SELECT 1 FROM tsenta_notifications WHERE fingerprint = ? OR source_key = ?",
+            (job.fingerprint, tsenta_source_key(job)),
+        ).fetchone() is not None
+
+    def mark_tsenta_notified(self, job: Job, at: datetime) -> bool:
+        try:
+            self.connection.execute(
+                "INSERT INTO tsenta_notifications(fingerprint, source_key, sent_at) VALUES (?, ?, ?)",
+                (job.fingerprint, tsenta_source_key(job), iso(at)),
+            )
+            self.connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
 
     def upsert(self, job: Job) -> tuple[Job, bool]:
         job.fingerprint = make_fingerprint(job)

@@ -102,7 +102,7 @@ def is_us_role(job: Job) -> bool:
     return False
 
 
-def passes_experience(job: Job) -> bool:
+def passes_experience(job: Job, max_required_years: float = MAX_REQUIRED_YEARS) -> bool:
     text = normalized(job.description)
     number = r"\d+(?:\.\d+)?"
 
@@ -126,26 +126,26 @@ def passes_experience(job: Job) -> bool:
     # require more than the user's 3.5-year ceiling.
     range_pattern = rf"\b({number})\s*(?:-|to)\s*({number})\s*(?:years?|yrs?)\b"
     for match in re.finditer(range_pattern, text):
-        if not is_optional(match) and float(match.group(2)) > MAX_REQUIRED_YEARS:
+        if not is_optional(match) and float(match.group(2)) > max_required_years:
             return False
 
     # Catch 4 years, 4+ years, and similar wording.
     single_pattern = rf"\b({number})\s*\+?\s*(?:years?|yrs?)\b"
     for match in re.finditer(single_pattern, text):
-        if not is_optional(match) and float(match.group(1)) > MAX_REQUIRED_YEARS:
+        if not is_optional(match) and float(match.group(1)) > max_required_years:
             return False
 
     # "More than 3.5 years" exceeds the ceiling even though the number itself
     # is not greater than 3.5.
     more_than_pattern = rf"\b(?:more than|over)\s+({number})\s*(?:years?|yrs?)\b"
     for match in re.finditer(more_than_pattern, text):
-        if not is_optional(match) and float(match.group(1)) >= MAX_REQUIRED_YEARS:
+        if not is_optional(match) and float(match.group(1)) >= max_required_years:
             return False
 
     return True
 
 
-def passes(job: Job) -> bool:
+def passes(job: Job, max_required_years: float = MAX_REQUIRED_YEARS) -> bool:
     job.categories = categories_for(job)
     title = normalized(job.title)
     obvious_mismatch = ("intern", "internship", "apprentice", "co op", "co-op", "staff ", "principal ", "director", "architect")
@@ -156,5 +156,5 @@ def passes(job: Job) -> bool:
         and not any(term in title for term in obvious_mismatch)
         and not re.search(r"\b(?:senior|manager)\b", title)
         and is_us_role(job)
-        and passes_experience(job)
+        and passes_experience(job, max_required_years=max_required_years)
     )
