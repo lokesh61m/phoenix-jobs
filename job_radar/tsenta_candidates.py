@@ -20,6 +20,11 @@ from .storage import make_fingerprint
 
 TSENTA_MAX_REQUIRED_YEARS = 3.0
 DEFAULT_COMPANIES_PATH = ROOT / "config" / "tsenta_companies.json"
+LEAD_TITLE = re.compile(r"\b(?:lead|leader|head)\b")
+LEVEL_ABOVE_TWO = re.compile(
+    r"\b(?:engineer|developer|sde)\s*(?:[-,/()]\s*)?(?:level\s*)?"
+    r"(?:iii|iv|v|vi|vii|viii|ix|x|[3-9]|[1-9]\d+)\b"
+)
 
 # A negative statement wins over a positive one if both appear in a posting.
 # Ambiguous or silent postings remain "unverified", never "confirmed".
@@ -87,6 +92,9 @@ def select_candidates(
     selected: dict[str, Candidate] = {}
     for job in jobs:
         if normalized(job.company) not in selected_companies:
+            continue
+        title = normalized(job.title)
+        if LEAD_TITLE.search(title) or LEVEL_ABOVE_TWO.search(title):
             continue
         # Undated boards are eligible only if we first saw the posting in this
         # window; a continuously visible old listing is not a fresh job.

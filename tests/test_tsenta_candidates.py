@@ -80,6 +80,25 @@ class TsentaCandidateTests(unittest.TestCase):
         senior = job(title="Senior Software Engineer")
         self.assertEqual(select_candidates([old, senior], "Java", {"datadog"}, cutoff), [])
 
+    def test_excludes_lead_and_level_three_or_higher_titles(self):
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        excluded = (
+            "Lead Software Engineer",
+            "Software Engineering Lead",
+            "Software Engineer II (Tech Lead)",
+            "SDE III",
+            "Software Engineer 3",
+            "Backend Engineer - Level IV",
+        )
+        for title in excluded:
+            with self.subTest(title=title):
+                self.assertEqual(select_candidates([job(title=title)], "Java Kafka", {"datadog"}, cutoff), [])
+
+        allowed = ("SDE 1", "SDE II", "Software Engineer 2", "Backend Engineer", "ML Platform Engineer")
+        for title in allowed:
+            with self.subTest(title=title):
+                self.assertEqual(len(select_candidates([job(title=title)], "Java Kafka", {"datadog"}, cutoff)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,7 +69,9 @@ bot. It uses the 29 companies in `config/tsenta_companies.json`, a 24-hour
 freshness window, US/US-remote roles, no senior/manager titles, and at most
 **3 required years** of experience. Explicit no-sponsorship roles are excluded;
 silent postings are labeled **unverified**. A role needs at least two concrete
-skills matching a private profile-skills list before it is sent.
+skills matching a private profile-skills list before it is sent. Lead titles and
+explicit engineer/developer levels III/3 and above are excluded; level I/II and
+unnumbered individual-contributor titles remain eligible.
 
 Each qualifying role is sent once through the second bot as plain Telegram
 messages with the full job description, source link, sponsorship label, and
