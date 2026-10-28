@@ -7,36 +7,47 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 from datetime import datetime, timedelta, timezone
 
 from .config import db_path, setup_environment
 from .storage import Store
-from .telegram import TelegramError, resolve_chat_ids, send_text_document
+from .telegram import TelegramError, resolve_chat_ids, send_plain_message
 from .tsenta_candidates import Candidate, load_selected_companies, select_candidates
 
 
 MAX_PER_RUN = 10
+MESSAGE_CHUNK_SIZE = 3600
 
 
-def document_for(candidate: Candidate) -> tuple[str, str, str]:
+def message_text_for(candidate: Candidate) -> str:
     job = candidate.job
-    identifier = re.sub(r"[^a-zA-Z0-9_-]+", "-", job.source_id or job.fingerprint[:12])[:30]
-    company = re.sub(r"[^a-zA-Z0-9_-]+", "-", job.company).strip("-")[:35]
-    filename = f"{company}-{identifier}.txt"
     skills = ", ".join(candidate.matched_skills) or "not specified"
     posted = job.effective_date.strftime("%Y-%m-%d %H:%M UTC") if job.effective_date else "first seen recently; posted date unknown"
-    caption = (
-        f"{job.company} — {job.title}\n{job.location}\n"
-        f"Sponsorship: {candidate.sponsorship} · Matched skills: {skills}\n{job.url}"
-    )
-    content = (
+    return (
         f"Company: {job.company}\nRole: {job.title}\nLocation: {job.location}\n"
         f"Posted: {posted}\nSponsorship: {candidate.sponsorship}\n"
         f"Matched profile skills: {skills}\nJob link: {job.url}\n\n"
         f"JOB DESCRIPTION\n\n{job.description.strip()}\n"
     )
-    return filename, caption, content
+
+
+def messages_for(candidate: Candidate) -> list[str]:
+    """Keep each plain-text message below Telegram's 4096-character limit."""
+    remaining = message_text_for(candidate)
+    chunks: list[str] = []
+    while len(remaining) > MESSAGE_CHUNK_SIZE:
+        boundary = next(
+            (index + 1 for index in range(MESSAGE_CHUNK_SIZE - 1, MESSAGE_CHUNK_SIZE // 2, -1)
+             if remaining[index].isspace()),
+            MESSAGE_CHUNK_SIZE,
+        )
+        chunks.append(remaining[:boundary])
+        remaining = remaining[boundary:]
+    chunks.append(remaining)
+    if len(chunks) == 1:
+        return chunks
+    label = f"{candidate.job.company} — {candidate.job.title}"[:120]
+    return [f"{label} · part {index}/{len(chunks)}\n\n{chunk}" for index, chunk in enumerate(chunks, 1)]
 
 
 def run_once(store: Store, token: str, profile_skills: str, now: datetime) -> int:
@@ -49,10 +60,10 @@ def run_once(store: Store, token: str, profile_skills: str, now: datetime) -> in
     chat_ids = resolve_chat_ids(token)
     sent = 0
     for candidate in pending[:MAX_PER_RUN]:
-        filename, caption, content = document_for(candidate)
         try:
             for chat_id in chat_ids:
-                send_text_document(token, chat_id, filename, content, caption)
+                for message in messages_for(candidate):
+                    send_plain_message(token, chat_id, message)
         except (TelegramError, OSError) as exc:
             # Network exceptions may include request URLs; never risk printing
             # the BotFather token embedded in Telegram's API path.

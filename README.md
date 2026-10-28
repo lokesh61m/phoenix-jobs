@@ -71,8 +71,9 @@ freshness window, US/US-remote roles, no senior/manager titles, and at most
 silent postings are labeled **unverified**. A role needs at least two concrete
 skills matching a private profile-skills list before it is sent.
 
-Each qualifying role is sent once through the second bot as a `.txt` file with
-the full job description, source link, sponsorship label, and matched skills.
+Each qualifying role is sent once through the second bot as plain Telegram
+messages with the full job description, source link, sponsorship label, and
+matched skills. Long descriptions are split into numbered messages.
 The GitHub Actions workflow processes up to 10 new roles per five-minute run;
 remaining roles are picked up on later runs. A separate SQLite notification
 table deduplicates by source job ID and fingerprint. Failed sends are retried on
