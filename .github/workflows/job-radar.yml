@@ -75,6 +75,7 @@ jobs:
         env:
           TSENTA_TELEGRAM_BOT_TOKEN: ${{ secrets.TSENTA_TELEGRAM_BOT_TOKEN }}
           TSENTA_PROFILE_SKILLS: ${{ secrets.TSENTA_PROFILE_SKILLS }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TSENTA_TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHAT_ID }}
           DB_PATH: data/jobs.sqlite3
         run: python -m job_radar.tsenta_telegram
 

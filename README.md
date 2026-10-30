@@ -26,7 +26,7 @@ A local monitor for fresh US software, ML, and AI jobs. It checks direct company
 
 2. Put the Telegram bot token from BotFather in `.env`. Do not commit `.env` or share the token.
 
-3. Open the bot in Telegram and send `/start`. The monitor discovers every private chat that sends `/start`, so multiple subscribers can receive the same alerts. You may also set `TELEGRAM_CHAT_ID` or comma-separated `TELEGRAM_CHAT_IDS` explicitly.
+3. Open the bot in Telegram and send `/start`. The monitor discovers every private chat that sends `/start`, so multiple subscribers can receive the same alerts. You may also set `TELEGRAM_CHAT_ID` or comma-separated `TELEGRAM_CHAT_IDS` explicitly. Telegram expires `/start` updates after 24 hours, so use explicit chat IDs for reliable long-term delivery.
 
 4. Run a test scan:
 
@@ -59,7 +59,7 @@ Add these repository Actions secrets before enabling the workflow:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
-`TELEGRAM_CHAT_ID` is optional for discovery, but keeping your existing value is fine. Friends only need to open the bot and send `/start`; they will receive future alerts on the next successful scan.
+`TELEGRAM_CHAT_ID` is optional for discovery, but keeping your existing value is fine. Friends without a configured chat ID need to send `/start` again if their update expires.
 
 ## Separate Tsenta shortlist bot
 
@@ -91,6 +91,10 @@ To enable the second feed:
 3. Add `TSENTA_PROFILE_SKILLS` as another Actions secret. Use a short
    space-separated list of your technical skills, not your full resume. The
    runner reads this at scan time and never writes it to the public repository.
+
+The Tsenta bot uses `TSENTA_TELEGRAM_CHAT_ID` when set, otherwise it reuses
+`TELEGRAM_CHAT_ID` as an explicit recipient. To avoid relying on Telegram's
+24-hour `/start` update, configure one of those secrets for long-term delivery.
 
 Both secrets are required; if either is absent, the second feed skips without
 affecting the original bot. For a local dry-run, put the values in the ignored

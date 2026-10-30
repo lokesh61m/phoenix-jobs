@@ -51,12 +51,10 @@ def configured_chat_ids() -> set[str]:
 
 
 def resolve_chat_ids(token: str) -> list[str]:
-    """Resolve configured recipients plus private chats that sent /start.
+    """Resolve explicitly configured recipients plus recent private /start chats.
 
-    Telegram keeps updates pending until a consumer advances the update offset.
-    We intentionally do not advance it here: the same subscription signal can
-    be rediscovered on later stateless GitHub Actions runs. Explicit IDs remain
-    supported for users who prefer not to rely on update discovery.
+    Telegram expires updates after 24 hours. Use a chat-ID secret for reliable
+    delivery beyond that window instead of relying on old /start updates.
     """
     chat_ids = configured_chat_ids()
     payload = call(token, "getUpdates", {"limit": "100", "timeout": "0"})

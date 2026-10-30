@@ -72,6 +72,8 @@ def run_once(store: Store, token: str, profile_skills: str, now: datetime) -> in
         store.mark_tsenta_notified(candidate.job, now)
         sent += 1
     print(f"[tsenta telegram] eligible_new={len(pending)} sent={sent} recipients={len(chat_ids)}")
+    if sent == 0:
+        raise TelegramError("No Tsenta jobs were delivered; see the preceding send errors")
     return sent
 
 

@@ -68,8 +68,8 @@ class TsentaTelegramTests(unittest.TestCase):
     def test_failed_send_is_retried(self):
         with patch("job_radar.tsenta_telegram.resolve_chat_ids", return_value=["123"]), patch(
             "job_radar.tsenta_telegram.send_plain_message", side_effect=TelegramError("offline")
-        ):
-            self.assertEqual(run_once(self.store, "fake-token", "Java Kafka", NOW), 0)
+        ), self.assertRaisesRegex(TelegramError, "No Tsenta jobs were delivered"):
+            run_once(self.store, "fake-token", "Java Kafka", NOW)
         self.assertFalse(self.store.tsenta_notified(self.saved))
 
     def test_source_id_deduplicates_changed_fingerprint(self):

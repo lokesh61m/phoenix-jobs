@@ -287,6 +287,12 @@ class TelegramSubscriptionTests(unittest.TestCase):
         ):
             resolve_chat_ids("token")
 
+    def test_configured_chat_works_after_start_update_expires(self):
+        with patch.dict(
+            os.environ, {"TELEGRAM_CHAT_ID": "222", "TELEGRAM_CHAT_IDS": ""}, clear=False
+        ), patch("job_radar.telegram.call", return_value={"result": []}):
+            self.assertEqual(resolve_chat_ids("token"), ["222"])
+
 
 if __name__ == "__main__":
     unittest.main()
